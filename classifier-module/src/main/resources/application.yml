@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: classifier-application
+  profiles:
+    active: dev
+app:
+  aws:
+    access-key: ${access-key}
+    secret-key: ${secret-key}
+    region: ${region}
+    sqs:
+      req-queue-url: ${req-queue-url}
+      res-queue-url: ${res-queue-url}
+    s3:
+      input-bucket: ${input-bucket}
+      output-bucket: ${output-bucket}

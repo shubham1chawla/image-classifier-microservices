@@ -1,0 +1,4 @@
+app:
+  script: python
+  script-path: ../scripts/classifier/classifier.py
+  download-dir: ../scripts/classifier/images/
