@@ -1,4 +1,4 @@
-package cloud.projects.gateway.concurrent;
+package cloud.projects.gateway.integration;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -11,25 +11,28 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import cloud.projects.library.dto.ClassificationResult;
+import cloud.projects.library.integration.AbstractReceiveMessageResponseMessageHandler;
+import lombok.Getter;
 import lombok.val;
 import lombok.extern.log4j.Log4j2;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
-import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
-import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 
 @Log4j2
 @Component
-public class ClassifierResultPoller implements Runnable {
+public class ReceiveMessageResponseMessageHandler extends AbstractReceiveMessageResponseMessageHandler {
 
+	@Getter
 	@Value("${app.aws.sqs.res-queue-url}")
-	private String resQueueUrl;
+	private String queueUrl;
 
 	@Value("${app.aws.s3.output-bucket}")
 	private String outputBucket;
 
+	@Getter
 	@Autowired
 	private SqsClient sqsClient;
 
@@ -39,13 +42,8 @@ public class ClassifierResultPoller implements Runnable {
 	private List<Consumer<ClassificationResult>> consumers = new LinkedList<>();
 
 	@Override
-	public void run() {
+	protected void handleReceiveMessageResponse(ReceiveMessageResponse response) {
 
-		// getting key from the response queue
-		val response = sqsClient.receiveMessage(ReceiveMessageRequest.builder().queueUrl(resQueueUrl).build());
-		if (!response.hasMessages()) {
-			return;
-		}
 		val key = response.messages().get(0).body();
 		log.info("Received acknowledgement for key: {}", key);
 
@@ -61,13 +59,9 @@ public class ClassifierResultPoller implements Runnable {
 		// deleting object from bucket
 		s3Client.deleteObject(DeleteObjectRequest.builder().bucket(outputBucket).key(key).build());
 
-		// deleting key from response queue
-		response.messages().stream()
-				.map(m -> DeleteMessageRequest.builder().queueUrl(resQueueUrl).receiptHandle(m.receiptHandle()).build())
-				.forEach(sqsClient::deleteMessage);
-
 		// publishing results
 		publish(new ClassificationResult(key, result));
+
 	}
 
 	public void addConsumer(Consumer<ClassificationResult> consumer) {

@@ -1,4 +1,4 @@
-package cloud.projects.classifier.concurrent;
+package cloud.projects.classifier.integration;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -7,14 +7,15 @@ import java.nio.file.Files;
 import java.util.Objects;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
+import cloud.projects.library.integration.AbstractReceiveMessageResponseMessageHandler;
 import cloud.projects.library.service.ClassificationService;
+import lombok.Getter;
 import lombok.val;
 import lombok.extern.log4j.Log4j2;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -23,21 +24,19 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
-import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
-import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 @Log4j2
 @Component
-public class ClassifierRequestPoller implements Runnable {
-
-	private static final String SEPARATOR = "--------------------------------------------------";
+public class ReceiveMessageResponseMessageHandler extends AbstractReceiveMessageResponseMessageHandler {
 
 	@Value("${app.download-dir}")
 	private File directory;
 
+	@Getter
 	@Value("${app.aws.sqs.req-queue-url}")
-	private String reqQueueUrl;
+	private String queueUrl;
 
 	@Value("${app.aws.sqs.res-queue-url}")
 	private String resQueueUrl;
@@ -51,6 +50,7 @@ public class ClassifierRequestPoller implements Runnable {
 	@Autowired
 	private ClassificationService service;
 
+	@Getter
 	@Autowired
 	private SqsClient sqsClient;
 
@@ -65,22 +65,8 @@ public class ClassifierRequestPoller implements Runnable {
 		log.info("Image download directory: {}", directory.getAbsolutePath());
 	}
 
-	@PreDestroy
-	public void cleanup() throws IOException {
-		Files.delete(directory.toPath());
-		log.info("Deleted download directory!");
-	}
-
 	@Override
-	public void run() {
-		log.info(SEPARATOR);
-
-		// loading keys from the response queue
-		val response = sqsClient.receiveMessage(ReceiveMessageRequest.builder().queueUrl(reqQueueUrl).build());
-		if (!response.hasMessages()) {
-			log.warn("No pending request to process.");
-			return;
-		}
+	protected void handleReceiveMessageResponse(ReceiveMessageResponse response) {
 
 		// extracting the key
 		val key = response.messages().get(0).body();
@@ -98,11 +84,6 @@ public class ClassifierRequestPoller implements Runnable {
 		val request = PutObjectRequest.builder().bucket(outputBucket).key(key).build();
 		s3Client.putObject(request, RequestBody.fromString(result.getResult()));
 
-		// deleting message from request queue
-		response.messages().stream()
-				.map(m -> DeleteMessageRequest.builder().queueUrl(reqQueueUrl).receiptHandle(m.receiptHandle()).build())
-				.forEach(sqsClient::deleteMessage);
-
 		// deleting image from input bucket
 		s3Client.deleteObject(DeleteObjectRequest.builder().bucket(inputBucket).key(key).build());
 
@@ -112,6 +93,7 @@ public class ClassifierRequestPoller implements Runnable {
 		// publishing result acknowledgement
 		sqsClient.sendMessage(SendMessageRequest.builder().queueUrl(resQueueUrl).messageBody(key).build());
 		log.info("Results published!");
+
 	}
 
 	private File downloadImage(String key) {

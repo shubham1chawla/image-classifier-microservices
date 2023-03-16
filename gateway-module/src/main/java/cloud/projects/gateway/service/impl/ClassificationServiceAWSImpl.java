@@ -5,19 +5,15 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 
-import cloud.projects.gateway.concurrent.ClassifierResultPoller;
+import cloud.projects.gateway.integration.ReceiveMessageResponseMessageHandler;
 import cloud.projects.library.dto.ClassificationResult;
 import cloud.projects.library.exception.ClassificationException;
 import cloud.projects.library.service.ClassificationService;
@@ -34,22 +30,12 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 public class ClassificationServiceAWSImpl implements ClassificationService {
 
 	private static final long TIME_OUT_VALUE = 100;
-	private static final TimeUnit TIME_OUT_UNIT = TimeUnit.MILLISECONDS;
-
-	private Map<String, ClassificationResult> cache;
-	private ScheduledExecutorService executor;
 
 	@Value("${app.aws.sqs.req-queue-url}")
 	private String reqQueueUrl;
 
-	@Value("${app.aws.sqs.res-queue-url}")
-	private String resQueueUrl;
-
 	@Value("${app.aws.s3.input-bucket}")
 	private String inputBucket;
-
-	@Value("${app.aws.s3.output-bucket}")
-	private String outputBucket;
 
 	@Autowired
 	private SqsClient sqsClient;
@@ -58,22 +44,13 @@ public class ClassificationServiceAWSImpl implements ClassificationService {
 	private S3Client s3Client;
 
 	@Autowired
-	private ClassifierResultPoller poller;
+	private ReceiveMessageResponseMessageHandler handler;
+
+	private Map<String, ClassificationResult> cache = new ConcurrentHashMap<>();
 
 	@PostConstruct
 	public void postConstruct() {
-		cache = new ConcurrentHashMap<>();
-		executor = new ScheduledThreadPoolExecutor(1);
-
-		// starting poller to consume results
-		poller.addConsumer(result -> cache.put(result.getKey(), result));
-		executor.scheduleAtFixedRate(poller, 0, TIME_OUT_VALUE, TIME_OUT_UNIT);
-	}
-
-	@PreDestroy
-	public void preDestroy() {
-		cache.clear();
-		executor.shutdown();
+		handler.addConsumer(result -> cache.put(result.getKey(), result));
 	}
 
 	@Override
